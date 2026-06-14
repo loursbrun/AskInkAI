@@ -116,6 +116,20 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
     pendingRef.current = []
   }, [])
 
+  // Navigate to a character AND reset all its existing samples so the user retrains from scratch.
+  const handleSelectChar = useCallback((char: string, idx: number) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    pendingRef.current = []
+    setIsPending(false)
+    canvasRef.current?.clear()
+    setProfile(prev => {
+      const next = clearLetter(prev, char)
+      saveProfile(next)
+      return next
+    })
+    setLetterIdx(idx)
+  }, [])
+
   const handleUndoLast = useCallback(() => {
     setProfile(prev => {
       const next = removeLastSample(prev, letter)
@@ -389,11 +403,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
               return (
                 <button
                   key={l}
-                  onClick={() => {
-                    if (timerRef.current) clearTimeout(timerRef.current)
-                    pendingRef.current = []
-                    setLetterIdx(i)
-                  }}
+                  onClick={() => handleSelectChar(l, i)}
                   className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm transition-colors"
                   style={{
                     background: current ? 'rgba(99,102,241,0.2)' : done ? 'rgba(16,185,129,0.08)' : '#111',
@@ -423,11 +433,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
               return (
                 <button
                   key={d}
-                  onClick={() => {
-                    if (timerRef.current) clearTimeout(timerRef.current)
-                    pendingRef.current = []
-                    setLetterIdx(globalIdx)
-                  }}
+                  onClick={() => handleSelectChar(d, globalIdx)}
                   className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm transition-colors"
                   style={{
                     background: current ? 'rgba(99,102,241,0.2)' : done ? 'rgba(16,185,129,0.08)' : '#111',
