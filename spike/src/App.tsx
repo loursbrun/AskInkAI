@@ -20,6 +20,22 @@ const engine = new RecognitionEngine()
 
 type AppMode = 'loading' | 'training' | 'recognition'
 
+// ── Speech synthesis ─────────────────────────────────────────────────────────
+// Cancel any ongoing speech and speak the given text.
+// On iOS/Safari the API is available but auto-speak (outside a user gesture)
+// works only after the user has already triggered a gesture-initiated speak once.
+function speak(text: string) {
+  if (!('speechSynthesis' in window)) return
+  window.speechSynthesis.cancel()
+  const utt = new SpeechSynthesisUtterance(text)
+  utt.lang = 'fr-FR'
+  window.speechSynthesis.speak(utt)
+}
+
+function speakChar(char: string) {
+  speak(char === ' ' ? 'espace' : char)
+}
+
 /** Returns 'space' for a left→right horizontal stroke, 'backspace' for right→left, null otherwise. */
 function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'backspace' | null {
   if (strokes.length !== 1) return null
@@ -129,8 +145,12 @@ export default function App() {
     // Detect horizontal gestures before running the recognition engine
     const gesture = detectGesture(strokes, size.width)
     if (gesture !== null) {
-      if (gesture === 'space') setBuiltText(t => t + ' ')
-      else setBuiltText(t => t.slice(0, -1))
+      if (gesture === 'space') {
+        setBuiltText(t => t + ' ')
+        speakChar(' ')
+      } else {
+        setBuiltText(t => t.slice(0, -1))
+      }
       setResult(null)
       clearCanvas()
       return
@@ -151,6 +171,7 @@ export default function App() {
       if (r.letter !== '?') {
         setBuiltText(t => t + r.letter)
         clearCanvas()
+        speakChar(r.letter)
       }
     } finally {
       setIsProcessing(false)
@@ -205,6 +226,14 @@ export default function App() {
     setBuiltText('')
     handleClearCanvas()
   }, [handleClearCanvas])
+
+  const handleSpeakText = useCallback(() => {
+    if (!builtText) {
+      speak('Aucun texte à lire')
+      return
+    }
+    speak(builtText.toLowerCase())
+  }, [builtText])
 
   if (appMode === 'loading') {
     return (
@@ -348,6 +377,22 @@ export default function App() {
           }}
         >
           {copied ? '✓ Copié' : '⎘ Copier'}
+        </button>
+
+        {/* Speak button */}
+        <button
+          onClick={handleSpeakText}
+          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          style={{
+            background: 'rgba(251,191,36,0.12)',
+            color: '#fbbf24',
+            border: '1px solid rgba(251,191,36,0.3)',
+            cursor: 'pointer',
+            minWidth: 90,
+            justifyContent: 'center',
+          }}
+        >
+          🔊 Énoncer
         </button>
 
         {/* Clear text button */}
