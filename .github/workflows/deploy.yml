@@ -18,7 +18,7 @@ jobs:
           cache: npm
           cache-dependency-path: spike/package-lock.json
 
-      - run: npm ci
+      - run: npm install
         working-directory: spike
 
       - run: npm run build
