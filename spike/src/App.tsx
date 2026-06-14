@@ -15,8 +15,6 @@ import TrainingScreen from './components/TrainingScreen'
 
 const AUTO_RECOGNIZE_DELAY = 1000
 const MAX_HISTORY = 10
-// Minimum confidence to accept a character into the built text and auto-clear the canvas
-const AUTO_ACCEPT_THRESHOLD = 0.55
 
 const engine = new RecognitionEngine()
 
@@ -149,10 +147,10 @@ export default function App() {
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next
       })
 
-      // On successful recognition: append to text and auto-clear the canvas
-      if (r.letter !== '?' && r.confidence >= AUTO_ACCEPT_THRESHOLD) {
+      // Accepted = recognizer returned a real character (it already applies its own confidence gate)
+      if (r.letter !== '?') {
         setBuiltText(t => t + r.letter)
-        setTimeout(() => clearCanvas(), 400)
+        clearCanvas()
       }
     } finally {
       setIsProcessing(false)
