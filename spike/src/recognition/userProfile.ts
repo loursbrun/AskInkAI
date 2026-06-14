@@ -73,12 +73,18 @@ export function sampleCount(profile: UserProfile, letter: string): number {
   return profile.alphabet[letter]?.length ?? 0
 }
 
-/** Letters with at least MIN_SAMPLES examples */
+/** Letters (A-Z) with at least MIN_SAMPLES examples */
 export function trainedLetters(profile: UserProfile): string[] {
-  return Object.entries(profile.alphabet)
-    .filter(([, samples]) => (samples?.length ?? 0) >= MIN_SAMPLES)
-    .map(([letter]) => letter)
-    .sort()
+  return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').filter(
+    l => (profile.alphabet[l]?.length ?? 0) >= MIN_SAMPLES
+  )
+}
+
+/** Digits (0-9) with at least MIN_SAMPLES examples */
+export function trainedDigits(profile: UserProfile): string[] {
+  return '0123456789'.split('').filter(
+    d => (profile.alphabet[d]?.length ?? 0) >= MIN_SAMPLES
+  )
 }
 
 /** True when all 26 letters have at least MIN_SAMPLES */

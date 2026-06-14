@@ -21,11 +21,9 @@ export class PersonalizedRecognizer {
 
   isReady(): boolean {
     if (!this.profile) return false
-    // Usable when at least 2 letters are trained (enough to discriminate)
     let count = 0
-    for (let i = 0; i < 26; i++) {
-      const letter = String.fromCharCode(65 + i)
-      if ((this.profile.alphabet[letter]?.length ?? 0) >= MIN_SAMPLES) {
+    for (const samples of Object.values(this.profile.alphabet)) {
+      if ((samples?.length ?? 0) >= MIN_SAMPLES) {
         count++
         if (count >= 2) return true
       }

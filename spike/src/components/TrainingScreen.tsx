@@ -16,6 +16,8 @@ import {
 import DrawingCanvas, { type DrawingCanvasHandle } from './DrawingCanvas'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+const DIGITS = '0123456789'.split('')
+const ALL_CHARS = [...LETTERS, ...DIGITS]
 // Délai après le DERNIER trait — assez long pour les lettres multi-traits (A, E, H, I, T…)
 const CAPTURE_DELAY = 1000
 
@@ -26,13 +28,13 @@ interface Props {
 }
 
 export default function TrainingScreen({ initialProfile, onComplete, onBack }: Props) {
-  // Start from first incomplete letter
+  // Start from first incomplete character
   const [letterIdx, setLetterIdx] = useState(() => {
     if (!initialProfile) return 0
-    for (let i = 0; i < 26; i++) {
-      if (sampleCount(initialProfile, LETTERS[i]) < TARGET_SAMPLES) return i
+    for (let i = 0; i < ALL_CHARS.length; i++) {
+      if (sampleCount(initialProfile, ALL_CHARS[i]) < TARGET_SAMPLES) return i
     }
-    return 25
+    return ALL_CHARS.length - 1
   })
 
   const [profile, setProfile] = useState<UserProfile>(initialProfile ?? createEmptyProfile())
@@ -45,11 +47,12 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingRef = useRef<Point[][]>([])
 
-  const letter = LETTERS[letterIdx]
+  const letter = ALL_CHARS[letterIdx]
   const count = sampleCount(profile, letter)
   const canAdvance = count >= MIN_SAMPLES
   const isLetterDone = count >= TARGET_SAMPLES
   const trainedCount = LETTERS.filter(l => sampleCount(profile, l) >= MIN_SAMPLES).length
+  const trainedDigitCount = DIGITS.filter(d => sampleCount(profile, d) >= MIN_SAMPLES).length
 
   // Sur changement de lettre : annule timer + vide canvas
   useEffect(() => {
@@ -133,11 +136,10 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
     if (timerRef.current) clearTimeout(timerRef.current)
     pendingRef.current = []
 
-    if (letterIdx < 25) {
+    if (letterIdx < ALL_CHARS.length - 1) {
       setLetterIdx(i => i + 1)
       setIsPending(false)
     } else {
-      // All letters processed — hand off profile
       setProfile(current => {
         onComplete(current)
         return current
@@ -164,7 +166,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
   // Auto-advance when letter hits TARGET_SAMPLES
   const prevCountRef = useRef(count)
   useEffect(() => {
-    if (count !== prevCountRef.current && count >= TARGET_SAMPLES && letterIdx < 25) {
+    if (count !== prevCountRef.current && count >= TARGET_SAMPLES && letterIdx < ALL_CHARS.length - 1) {
       const t = setTimeout(goNext, 1800)
       prevCountRef.current = count
       return () => clearTimeout(t)
@@ -173,6 +175,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
   }, [count, letterIdx, goNext])
 
   const progressPct = (trainedCount / 26) * 100
+  const isDigitChar = letterIdx >= 26
 
   return (
     <div
@@ -196,7 +199,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
             Apprentissage de l'écriture
           </div>
           <div className="text-xs" style={{ color: '#444' }}>
-            {trainedCount} lettre{trainedCount !== 1 ? 's' : ''} apprises sur 26
+            {trainedCount}/26 lettres · {trainedDigitCount}/10 chiffres
           </div>
         </div>
 
@@ -268,7 +271,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
               style={{ color: isLetterDone ? '#6ee7b7' : isPending ? '#6366f1' : '#555' }}
             >
               {isLetterDone
-                ? '✓ Lettre apprise — passage automatique…'
+                ? `✓ ${isDigitChar ? 'Chiffre' : 'Lettre'} appris — passage automatique…`
                 : isPending
                 ? 'Attente fin du tracé…'
                 : count === 0
@@ -352,11 +355,11 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
                 opacity: !canAdvance && count === 0 ? 0.4 : 1,
               }}
             >
-              {letterIdx < 25 ? (
+              {letterIdx < ALL_CHARS.length - 1 ? (
                 canAdvance
                   ? isLetterDone
-                    ? `✓ Lettre ${LETTERS[letterIdx + 1]} →`
-                    : `Suivante (${LETTERS[letterIdx + 1]}) →`
+                    ? `✓ ${ALL_CHARS[letterIdx + 1]} →`
+                    : `Suivante (${ALL_CHARS[letterIdx + 1]}) →`
                   : 'Passer →'
               ) : (
                 isComplete(profile) ? 'Terminer ✓' : 'Terminer →'
@@ -375,7 +378,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
           }}
         >
           <div className="text-xs mb-2" style={{ color: '#444', fontFamily: 'monospace' }}>
-            PROGRESSION
+            LETTRES
           </div>
           <div className="grid grid-cols-2 gap-1">
             {LETTERS.map((l, i) => {
@@ -393,22 +396,46 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
                   }}
                   className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm transition-colors"
                   style={{
-                    background: current
-                      ? 'rgba(99,102,241,0.2)'
-                      : done
-                      ? 'rgba(16,185,129,0.08)'
-                      : '#111',
-                    border: `1px solid ${
-                      current
-                        ? 'rgba(99,102,241,0.5)'
-                        : done
-                        ? 'rgba(16,185,129,0.3)'
-                        : '#1a1a1a'
-                    }`,
+                    background: current ? 'rgba(99,102,241,0.2)' : done ? 'rgba(16,185,129,0.08)' : '#111',
+                    border: `1px solid ${current ? 'rgba(99,102,241,0.5)' : done ? 'rgba(16,185,129,0.3)' : '#1a1a1a'}`,
                     color: done ? '#6ee7b7' : current ? '#c7d2fe' : '#666',
                   }}
                 >
                   <span className="font-mono font-semibold">{l}</span>
+                  <span className="text-xs" style={{ color: done ? '#6ee7b7' : '#444' }}>
+                    {done ? '✓' : n > 0 ? `${n}` : '—'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="text-xs mt-3 mb-2" style={{ color: '#444', fontFamily: 'monospace' }}>
+            CHIFFRES
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            {DIGITS.map((d, i) => {
+              const globalIdx = 26 + i
+              const n = sampleCount(profile, d)
+              const done = n >= TARGET_SAMPLES
+              const current = globalIdx === letterIdx
+
+              return (
+                <button
+                  key={d}
+                  onClick={() => {
+                    if (timerRef.current) clearTimeout(timerRef.current)
+                    pendingRef.current = []
+                    setLetterIdx(globalIdx)
+                  }}
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm transition-colors"
+                  style={{
+                    background: current ? 'rgba(99,102,241,0.2)' : done ? 'rgba(16,185,129,0.08)' : '#111',
+                    border: `1px solid ${current ? 'rgba(99,102,241,0.5)' : done ? 'rgba(16,185,129,0.3)' : '#1a1a1a'}`,
+                    color: done ? '#6ee7b7' : current ? '#c7d2fe' : '#666',
+                  }}
+                >
+                  <span className="font-mono font-semibold">{d}</span>
                   <span className="text-xs" style={{ color: done ? '#6ee7b7' : '#444' }}>
                     {done ? '✓' : n > 0 ? `${n}` : '—'}
                   </span>
@@ -423,7 +450,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
                 {totalSamples(profile)} exemples
               </div>
               <div className="text-xs" style={{ color: '#555' }}>
-                {trainedCount}/26 lettres
+                {trainedCount}/26 lettres · {trainedDigitCount}/10 chiffres
               </div>
             </div>
           )}

@@ -13,14 +13,34 @@ import DrawingCanvas, { DrawingCanvasHandle } from './components/DrawingCanvas'
 import ResultPanel from './components/ResultPanel'
 import TrainingScreen from './components/TrainingScreen'
 
-// Délai après le DERNIER trait avant de lancer la reconnaissance.
-// Doit être suffisamment long pour les lettres multi-traits (A, E, F, H, I, T, X…).
 const AUTO_RECOGNIZE_DELAY = 1000
 const MAX_HISTORY = 10
+// Minimum confidence to accept a character into the built text and auto-clear the canvas
+const AUTO_ACCEPT_THRESHOLD = 0.55
 
 const engine = new RecognitionEngine()
 
 type AppMode = 'loading' | 'training' | 'recognition'
+
+/** Returns 'space' for a left→right horizontal stroke, 'backspace' for right→left, null otherwise. */
+function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'backspace' | null {
+  if (strokes.length !== 1) return null
+  const stroke = strokes[0]
+  if (stroke.length < 4) return null
+
+  const first = stroke[0]
+  const last = stroke[stroke.length - 1]
+  const deltaX = last.x - first.x
+  const deltaY = last.y - first.y
+  const absDeltaX = Math.abs(deltaX)
+  const absDeltaY = Math.abs(deltaY)
+
+  // Must be predominantly horizontal (3:1 ratio) and span at least 30% of canvas width
+  if (absDeltaX < absDeltaY * 3) return null
+  if (absDeltaX < canvasWidth * 0.3) return null
+
+  return deltaX > 0 ? 'space' : 'backspace'
+}
 
 export default function App() {
   const canvasRef = useRef<DrawingCanvasHandle>(null)
@@ -34,14 +54,15 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [autoMode, setAutoMode] = useState(true)
-  // Visual pending state: true while the debounce timer is running
   const [isPending, setIsPending] = useState(false)
-  // Increments on each new stroke to restart the progress-bar CSS animation
   const pendingKeyRef = useRef(0)
   const [pendingKey, setPendingKey] = useState(0)
   const historySeqRef = useRef(0)
 
-  // Initialize engine + load profile
+  // Accumulated text built letter by letter
+  const [builtText, setBuiltText] = useState('')
+  const [copied, setCopied] = useState(false)
+
   useEffect(() => {
     engine.initialize().then((status) => {
       const saved = loadProfile()
@@ -52,7 +73,7 @@ export default function App() {
         setAppMode('recognition')
       } else {
         setEngineStatus(status)
-        setAppMode('training')  // first run: go straight to training
+        setAppMode('training')
       }
     })
     return () => engine.dispose()
@@ -71,7 +92,6 @@ export default function App() {
   }, [applyProfile])
 
   const handleTrainingBack = useCallback(() => {
-    // Allow returning to recognition even if training is incomplete
     if (userProfile && totalSamples(userProfile) > 0) {
       setAppMode('recognition')
     } else {
@@ -80,7 +100,6 @@ export default function App() {
         applyProfile(saved)
         setAppMode('recognition')
       }
-      // else stays on training (no profile to fall back to)
     }
   }, [userProfile, applyProfile])
 
@@ -91,12 +110,33 @@ export default function App() {
     setEngineStatus(engine.getStatus())
     setResult(null)
     setHistory([])
+    setBuiltText('')
     setAppMode('training')
+  }, [])
+
+  const clearCanvas = useCallback(() => {
+    canvasRef.current?.clear()
+    pendingStrokesRef.current = []
+    if (autoTimerRef.current) {
+      clearTimeout(autoTimerRef.current)
+      autoTimerRef.current = null
+    }
+    setIsPending(false)
   }, [])
 
   const recognize = useCallback(async (strokes: Point[][]) => {
     if (isProcessing || strokes.length === 0) return
     const size = canvasRef.current?.getCanvasSize() ?? { width: 400, height: 400 }
+
+    // Detect horizontal gestures before running the recognition engine
+    const gesture = detectGesture(strokes, size.width)
+    if (gesture !== null) {
+      if (gesture === 'space') setBuiltText(t => t + ' ')
+      else setBuiltText(t => t.slice(0, -1))
+      setResult(null)
+      clearCanvas()
+      return
+    }
 
     setIsProcessing(true)
     try {
@@ -108,19 +148,23 @@ export default function App() {
         const next = [...prev, entry]
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next
       })
+
+      // On successful recognition: append to text and auto-clear the canvas
+      if (r.letter !== '?' && r.confidence >= AUTO_ACCEPT_THRESHOLD) {
+        setBuiltText(t => t + r.letter)
+        setTimeout(() => clearCanvas(), 400)
+      }
     } finally {
       setIsProcessing(false)
     }
-  }, [isProcessing])
+  }, [isProcessing, clearCanvas])
 
   const handleStrokeEnd = useCallback((strokes: Point[][]) => {
     pendingStrokesRef.current = strokes
     if (!autoMode) return
 
-    // Réinitialise le timer à chaque nouveau trait
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current)
 
-    // Incrémente la clé pour relancer l'animation de la barre de progression
     pendingKeyRef.current += 1
     setPendingKey(pendingKeyRef.current)
     setIsPending(true)
@@ -132,12 +176,10 @@ export default function App() {
   }, [autoMode, recognize])
 
   const handleDrawStart = useCallback(() => {
-    // Nouveau trait : on annule le timer en cours (pas encore parti analyser)
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current)
       autoTimerRef.current = null
     }
-    // La barre de progression sera relancée quand le trait se termine
     setIsPending(false)
   }, [])
 
@@ -146,19 +188,26 @@ export default function App() {
     recognize(strokes)
   }, [recognize])
 
-  const handleClear = useCallback(() => {
-    canvasRef.current?.clear()
+  const handleClearCanvas = useCallback(() => {
     setResult(null)
-    setIsPending(false)
-    pendingStrokesRef.current = []
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current)
-      autoTimerRef.current = null
-    }
     setIsProcessing(false)
-  }, [])
+    clearCanvas()
+  }, [clearCanvas])
 
-  // ── Loading splash ────────────────────────────────────────────────────────
+  const handleCopyText = useCallback(async () => {
+    if (!builtText) return
+    try {
+      await navigator.clipboard.writeText(builtText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard not available */ }
+  }, [builtText])
+
+  const handleClearText = useCallback(() => {
+    setBuiltText('')
+    handleClearCanvas()
+  }, [handleClearCanvas])
+
   if (appMode === 'loading') {
     return (
       <div
@@ -170,7 +219,6 @@ export default function App() {
     )
   }
 
-  // ── Training screen ───────────────────────────────────────────────────────
   if (appMode === 'training') {
     return (
       <TrainingScreen
@@ -181,7 +229,6 @@ export default function App() {
     )
   }
 
-  // ── Recognition UI ────────────────────────────────────────────────────────
   const trained = userProfile ? trainedLetters(userProfile) : []
 
   return (
@@ -203,7 +250,6 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Profile badge */}
           {userProfile && trained.length > 0 && (
             <div
               className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
@@ -213,28 +259,19 @@ export default function App() {
                 color: '#6ee7b7',
               }}
             >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full"
-                style={{ background: '#10b981' }}
-              />
+              <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#10b981' }} />
               Profil · {trained.length}/26
             </div>
           )}
 
-          {/* Training button */}
           <button
             onClick={() => setAppMode('training')}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
-            style={{
-              background: '#1a1a1a',
-              color: '#888',
-              border: '1px solid #222',
-            }}
+            style={{ background: '#1a1a1a', color: '#888', border: '1px solid #222' }}
           >
             ✏️ Entraîner
           </button>
 
-          {/* Reset profile */}
           {userProfile && (
             <button
               onClick={handleResetProfile}
@@ -246,28 +283,22 @@ export default function App() {
             </button>
           )}
 
-          {/* Auto-recognition toggle */}
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <span className="text-xs" style={{ color: '#666' }}>Auto</span>
             <button
               onClick={() => setAutoMode(v => !v)}
               className="relative rounded-full transition-colors duration-200"
               style={{
-                width: 36,
-                height: 20,
+                width: 36, height: 20,
                 background: autoMode ? '#6366f1' : '#2a2a2a',
-                border: 'none',
-                cursor: 'pointer',
+                border: 'none', cursor: 'pointer',
               }}
               aria-label={`Auto-reconnaissance ${autoMode ? 'activée' : 'désactivée'}`}
             >
               <span
                 className="absolute top-0.5 rounded-full transition-transform duration-200"
                 style={{
-                  width: 16,
-                  height: 16,
-                  background: '#fff',
-                  left: 2,
+                  width: 16, height: 16, background: '#fff', left: 2,
                   transform: autoMode ? 'translateX(16px)' : 'translateX(0)',
                 }}
               />
@@ -275,6 +306,69 @@ export default function App() {
           </label>
         </div>
       </header>
+
+      {/* Text composition bar */}
+      <div
+        className="flex-none flex items-center gap-2 px-4 py-2"
+        style={{ borderBottom: '1px solid #1a1a1a', background: '#0d0d0d' }}
+      >
+        {/* Text display */}
+        <div
+          className="flex-1 min-w-0 px-3 py-2 rounded-lg overflow-x-auto"
+          style={{
+            background: '#111',
+            border: '1px solid #222',
+            minHeight: 44,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          {builtText ? (
+            <span style={{ color: '#f5f5f5', fontFamily: 'monospace', fontSize: 20, whiteSpace: 'pre', letterSpacing: 1 }}>
+              {builtText}
+              <span className="cursor-blink" style={{ color: '#6366f1' }}>|</span>
+            </span>
+          ) : (
+            <span style={{ color: '#333', fontFamily: 'monospace', fontSize: 14 }}>
+              Dessine des lettres — elles s'accumuleront ici…
+            </span>
+          )}
+        </div>
+
+        {/* Copy button */}
+        <button
+          onClick={handleCopyText}
+          disabled={!builtText}
+          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          style={{
+            background: copied ? 'rgba(16,185,129,0.2)' : builtText ? '#6366f1' : '#1a1a1a',
+            color: copied ? '#6ee7b7' : builtText ? '#fff' : '#333',
+            border: copied ? '1px solid rgba(16,185,129,0.4)' : 'none',
+            cursor: builtText ? 'pointer' : 'not-allowed',
+            minWidth: 90,
+            justifyContent: 'center',
+          }}
+        >
+          {copied ? '✓ Copié' : '⎘ Copier'}
+        </button>
+
+        {/* Clear text button */}
+        <button
+          onClick={handleClearText}
+          disabled={!builtText}
+          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          style={{
+            background: builtText ? 'rgba(239,68,68,0.15)' : '#1a1a1a',
+            color: builtText ? '#f87171' : '#333',
+            border: builtText ? '1px solid rgba(239,68,68,0.3)' : '1px solid #1a1a1a',
+            cursor: builtText ? 'pointer' : 'not-allowed',
+            minWidth: 90,
+            justifyContent: 'center',
+          }}
+        >
+          ✕ Effacer
+        </button>
+      </div>
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden min-h-0">
@@ -289,7 +383,7 @@ export default function App() {
             />
           </div>
 
-          {/* Barre de progression : se remplit pendant le délai d'attente avant analyse */}
+          {/* Progress bar */}
           <div style={{ height: 2, background: '#111', flexShrink: 0 }}>
             {isPending && autoMode && (
               <div
@@ -308,12 +402,12 @@ export default function App() {
             style={{ borderTop: '1px solid #1a1a1a', background: '#0d0d0d' }}
           >
             <button
-              onClick={handleClear}
+              onClick={handleClearCanvas}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors"
               style={{ background: '#1a1a1a', color: '#888', border: '1px solid #222' }}
             >
               <span>✕</span>
-              <span>Effacer</span>
+              <span>Effacer dessin</span>
             </button>
 
             {!autoMode && (
@@ -334,10 +428,7 @@ export default function App() {
             )}
 
             {autoMode && (
-              <span
-                className="text-xs ml-auto"
-                style={{ color: isPending ? '#6366f1' : '#444' }}
-              >
+              <span className="text-xs ml-auto" style={{ color: isPending ? '#6366f1' : '#444' }}>
                 {isPending
                   ? 'Attente fin du tracé…'
                   : `Auto · ${AUTO_RECOGNIZE_DELAY / 1000}s après le dernier trait`}
@@ -370,6 +461,19 @@ export default function App() {
             profileLetterCount={trained.length}
           />
         </div>
+      </div>
+
+      {/* Gesture hint bar */}
+      <div
+        className="flex-none flex items-center justify-center gap-6 px-4 py-1.5"
+        style={{ borderTop: '1px solid #111', background: '#080808' }}
+      >
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>
+          →→ trait horizontal : espace
+        </span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>
+          ←← trait horizontal : suppr.
+        </span>
       </div>
     </div>
   )
