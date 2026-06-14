@@ -21,9 +21,11 @@ const engine = new RecognitionEngine()
 type AppMode = 'loading' | 'training' | 'recognition'
 
 // ── Speech synthesis ─────────────────────────────────────────────────────────
-// Cancel any ongoing speech and speak the given text.
-// On iOS/Safari the API is available but auto-speak (outside a user gesture)
-// works only after the user has already triggered a gesture-initiated speak once.
+const DIGIT_WORDS: Record<string, string> = {
+  '0': 'zéro', '1': 'un', '2': 'deux', '3': 'trois', '4': 'quatre',
+  '5': 'cinq', '6': 'six', '7': 'sept', '8': 'huit', '9': 'neuf',
+}
+
 function speak(text: string) {
   if (!('speechSynthesis' in window)) return
   window.speechSynthesis.cancel()
@@ -32,8 +34,13 @@ function speak(text: string) {
   window.speechSynthesis.speak(utt)
 }
 
+// Convert a single recognized character to its natural spoken form.
+// Passing uppercase letters to the TTS causes it to say "A majuscule" —
+// lowercase avoids that. Digits are mapped to French words.
 function speakChar(char: string) {
-  speak(char === ' ' ? 'espace' : char)
+  if (char === ' ') { speak('espace'); return }
+  if (DIGIT_WORDS[char]) { speak(DIGIT_WORDS[char]); return }
+  speak(char.toLowerCase())
 }
 
 /** Returns 'space' for a left→right horizontal stroke, 'backspace' for right→left, null otherwise. */
