@@ -1,28 +1,27 @@
-import { strokesToEMNISTTensor } from './preprocessor'
-import { extractImageFeatures, type ImageFeatures } from './imageFeatures'
 import type { Point } from '../types'
 
-const STORAGE_KEY = 'askink_user_profile_v1'
+const STORAGE_KEY = 'askink_user_profile_v2'
 
+// Raw stroke points (x, y only — timestamps not needed for path recognition).
 export interface ProfileSample {
-  features: ImageFeatures
+  strokes: { x: number; y: number }[][]
   addedAt: number
 }
 
 export interface UserProfile {
-  version: 1
+  version: 2
   createdAt: number
   updatedAt: number
   alphabet: Partial<Record<string, ProfileSample[]>>
 }
 
-export const TARGET_SAMPLES = 5   // target per letter
-export const MIN_SAMPLES = 3      // minimum to consider a letter "trained"
-export const MAX_SAMPLES = 10     // cap per letter
+export const TARGET_SAMPLES = 5
+export const MIN_SAMPLES = 3
+export const MAX_SAMPLES = 10
 
 export function createEmptyProfile(): UserProfile {
   return {
-    version: 1,
+    version: 2,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     alphabet: {},
@@ -34,18 +33,18 @@ export function addSample(
   letter: string,
   strokes: Point[][],
 ): UserProfile {
-  const tensor = strokesToEMNISTTensor(strokes)
-  const features = extractImageFeatures(tensor)
   const existing = profile.alphabet[letter] ?? []
+  if (existing.length >= MAX_SAMPLES) return profile
 
-  if (existing.length >= MAX_SAMPLES) return profile  // already capped
+  // Store raw (x, y) points — no bitmap conversion needed for DBPathRecognizer
+  const rawStrokes = strokes.map(s => s.map(p => ({ x: p.x, y: p.y })))
 
   return {
     ...profile,
     updatedAt: Date.now(),
     alphabet: {
       ...profile.alphabet,
-      [letter]: [...existing, { features, addedAt: Date.now() }],
+      [letter]: [...existing, { strokes: rawStrokes, addedAt: Date.now() }],
     },
   }
 }
@@ -73,21 +72,18 @@ export function sampleCount(profile: UserProfile, letter: string): number {
   return profile.alphabet[letter]?.length ?? 0
 }
 
-/** Letters (A-Z) with at least MIN_SAMPLES examples */
 export function trainedLetters(profile: UserProfile): string[] {
   return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').filter(
     l => (profile.alphabet[l]?.length ?? 0) >= MIN_SAMPLES
   )
 }
 
-/** Digits (0-9) with at least MIN_SAMPLES examples */
 export function trainedDigits(profile: UserProfile): string[] {
   return '0123456789'.split('').filter(
     d => (profile.alphabet[d]?.length ?? 0) >= MIN_SAMPLES
   )
 }
 
-/** True when all 26 letters have at least MIN_SAMPLES */
 export function isComplete(profile: UserProfile): boolean {
   for (let i = 0; i < 26; i++) {
     if (sampleCount(profile, String.fromCharCode(65 + i)) < MIN_SAMPLES) return false
@@ -103,7 +99,7 @@ export function saveProfile(profile: UserProfile): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile))
   } catch {
-    // localStorage full or unavailable — silently ignore
+    // localStorage full or unavailable
   }
 }
 
@@ -112,7 +108,7 @@ export function loadProfile(): UserProfile | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as UserProfile
-    if (parsed.version !== 1) return null
+    if (parsed.version !== 2) return null
     return parsed
   } catch {
     return null
@@ -121,4 +117,6 @@ export function loadProfile(): UserProfile | null {
 
 export function deleteProfile(): void {
   localStorage.removeItem(STORAGE_KEY)
+  // Also clean up any v1 profile that might exist
+  localStorage.removeItem('askink_user_profile_v1')
 }

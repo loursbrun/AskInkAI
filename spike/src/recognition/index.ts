@@ -1,6 +1,7 @@
 import type { Point, RecognitionResult, EngineStatus } from '../types'
 import type { UserProfile } from './userProfile'
-import { PersonalizedRecognizer } from './PersonalizedRecognizer'
+import { createEmptyProfile } from './userProfile'
+import { DBPersonalizedRecognizer } from './DBPersonalizedRecognizer'
 import { EMNISTRecognizer } from './EMNISTRecognizer'
 import { ImageRecognizer } from './ImageRecognizer'
 import { StrokeAnalyzer } from './StrokeAnalyzer'
@@ -9,7 +10,7 @@ import { strokesToEMNISTTensor } from './preprocessor'
 export type { EngineStatus }
 
 export class RecognitionEngine {
-  private personal = new PersonalizedRecognizer()
+  private personal = new DBPersonalizedRecognizer()
   private emnist = new EMNISTRecognizer()
   private imageNN = new ImageRecognizer()
   private analyzer = new StrokeAnalyzer()
@@ -39,7 +40,7 @@ export class RecognitionEngine {
   }
 
   clearProfile(): void {
-    this.personal.setProfile({ version: 1, createdAt: 0, updatedAt: 0, alphabet: {} })
+    this.personal.setProfile(createEmptyProfile())
     // Revert to best available generic engine
     this.status = this.emnist.isLoaded() ? 'ready' : 'fallback'
   }
