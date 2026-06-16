@@ -12,13 +12,18 @@ import {
 import DrawingCanvas, { DrawingCanvasHandle } from './components/DrawingCanvas'
 import ResultPanel from './components/ResultPanel'
 import TrainingScreen from './components/TrainingScreen'
+import AuthPage from './components/AuthPage'
+import ApiKeyForm from './components/ApiKeyForm'
+import ResponseModal from './components/ResponseModal'
+import AudioPlayer from './components/AudioPlayer'
+import { api, type User } from './api/client'
 
 const AUTO_RECOGNIZE_DELAY = 1000
 const MAX_HISTORY = 10
 
 const engine = new RecognitionEngine()
 
-type AppMode = 'loading' | 'training' | 'recognition'
+type AppMode = 'checking-auth' | 'auth' | 'api-key-setup' | 'loading' | 'training' | 'recognition'
 
 // ── Speech synthesis ─────────────────────────────────────────────────────────
 const DIGIT_WORDS: Record<string, string> = {
@@ -34,32 +39,24 @@ function speak(text: string) {
   window.speechSynthesis.speak(utt)
 }
 
-// Convert a single recognized character to its natural spoken form.
-// Passing uppercase letters to the TTS causes it to say "A majuscule" —
-// lowercase avoids that. Digits are mapped to French words.
 function speakChar(char: string) {
   if (char === ' ') { speak('espace'); return }
   if (DIGIT_WORDS[char]) { speak(DIGIT_WORDS[char]); return }
   speak(char.toLowerCase())
 }
 
-/** Returns 'space' for a left→right horizontal stroke, 'backspace' for right→left, null otherwise. */
 function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'backspace' | null {
   if (strokes.length !== 1) return null
   const stroke = strokes[0]
   if (stroke.length < 4) return null
-
   const first = stroke[0]
   const last = stroke[stroke.length - 1]
   const deltaX = last.x - first.x
   const deltaY = last.y - first.y
   const absDeltaX = Math.abs(deltaX)
   const absDeltaY = Math.abs(deltaY)
-
-  // Must be predominantly horizontal (3:1 ratio) and span at least 30% of canvas width
   if (absDeltaX < absDeltaY * 3) return null
   if (absDeltaX < canvasWidth * 0.3) return null
-
   return deltaX > 0 ? 'space' : 'backspace'
 }
 
@@ -68,7 +65,19 @@ export default function App() {
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingStrokesRef = useRef<Point[][]>([])
 
-  const [appMode, setAppMode] = useState<AppMode>('loading')
+  // ── Auth state ────────────────────────────────────────────────────────────
+  const [user, setUser] = useState<User | null>(null)
+  const [apiKeyHint, setApiKeyHint] = useState<string | null>(null)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+
+  // ── Claude state ──────────────────────────────────────────────────────────
+  const [claudeResponse, setClaudeResponse] = useState<string | null>(null)
+  const [isSendingToClaude, setIsSendingToClaude] = useState(false)
+  const [claudeError, setClaudeError] = useState<string | null>(null)
+  const [audioText, setAudioText] = useState<string | null>(null)
+
+  // ── Recognition app state ─────────────────────────────────────────────────
+  const [appMode, setAppMode] = useState<AppMode>('checking-auth')
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [engineStatus, setEngineStatus] = useState<EngineStatus>('loading')
   const [result, setResult] = useState<RecognitionResult | null>(null)
@@ -79,12 +88,27 @@ export default function App() {
   const pendingKeyRef = useRef(0)
   const [pendingKey, setPendingKey] = useState(0)
   const historySeqRef = useRef(0)
-
-  // Accumulated text built letter by letter
   const [builtText, setBuiltText] = useState('')
   const [copied, setCopied] = useState(false)
 
+  // ── Auth init ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    api.auth.me()
+      .then(async (u) => {
+        setUser(u)
+        const keyInfo = await api.apiKey.get().catch(() => null)
+        setApiKeyHint(keyInfo?.hint ?? null)
+        // Transition to recognition engine init
+        setAppMode('loading')
+      })
+      .catch(() => {
+        setAppMode('auth')
+      })
+  }, [])
+
+  // ── Recognition engine init (runs after auth confirmed) ───────────────────
+  useEffect(() => {
+    if (appMode !== 'loading') return
     engine.initialize().then((status) => {
       const saved = loadProfile()
       if (saved) {
@@ -98,8 +122,39 @@ export default function App() {
       }
     })
     return () => engine.dispose()
+  }, [appMode])
+
+  // ── Auth handlers ─────────────────────────────────────────────────────────
+  const handleAuthSuccess = useCallback(async (u: User) => {
+    setUser(u)
+    const keyInfo = await api.apiKey.get().catch(() => null)
+    setApiKeyHint(keyInfo?.hint ?? null)
+    if (!keyInfo) {
+      setAppMode('api-key-setup')
+    } else {
+      setAppMode('loading')
+    }
   }, [])
 
+  const handleApiKeySaved = useCallback((hint: string) => {
+    setApiKeyHint(hint)
+    setShowApiKeyModal(false)
+    if (appMode === 'api-key-setup') setAppMode('loading')
+  }, [appMode])
+
+  const handleApiKeyDeleted = useCallback(() => {
+    setApiKeyHint(null)
+    setShowApiKeyModal(false)
+  }, [])
+
+  const handleLogout = useCallback(async () => {
+    await api.auth.logout().catch(() => {})
+    setUser(null)
+    setApiKeyHint(null)
+    setAppMode('auth')
+  }, [])
+
+  // ── Recognition handlers ──────────────────────────────────────────────────
   const applyProfile = useCallback((profile: UserProfile) => {
     engine.setProfile(profile)
     setUserProfile(profile)
@@ -117,10 +172,7 @@ export default function App() {
       setAppMode('recognition')
     } else {
       const saved = loadProfile()
-      if (saved) {
-        applyProfile(saved)
-        setAppMode('recognition')
-      }
+      if (saved) { applyProfile(saved); setAppMode('recognition') }
     }
   }, [userProfile, applyProfile])
 
@@ -138,31 +190,21 @@ export default function App() {
   const clearCanvas = useCallback(() => {
     canvasRef.current?.clear()
     pendingStrokesRef.current = []
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current)
-      autoTimerRef.current = null
-    }
+    if (autoTimerRef.current) { clearTimeout(autoTimerRef.current); autoTimerRef.current = null }
     setIsPending(false)
   }, [])
 
   const recognize = useCallback(async (strokes: Point[][]) => {
     if (isProcessing || strokes.length === 0) return
     const size = canvasRef.current?.getCanvasSize() ?? { width: 400, height: 400 }
-
-    // Detect horizontal gestures before running the recognition engine
     const gesture = detectGesture(strokes, size.width)
     if (gesture !== null) {
-      if (gesture === 'space') {
-        setBuiltText(t => t + ' ')
-        speakChar(' ')
-      } else {
-        setBuiltText(t => t.slice(0, -1))
-      }
+      if (gesture === 'space') { setBuiltText(t => t + ' '); speakChar(' ') }
+      else { setBuiltText(t => t.slice(0, -1)) }
       setResult(null)
       clearCanvas()
       return
     }
-
     setIsProcessing(true)
     try {
       const r = await engine.recognize(strokes, size.width, size.height)
@@ -173,8 +215,6 @@ export default function App() {
         const next = [...prev, entry]
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next
       })
-
-      // Accepted = recognizer returned a real character (it already applies its own confidence gate)
       if (r.letter !== '?') {
         setBuiltText(t => t + r.letter)
         clearCanvas()
@@ -188,13 +228,10 @@ export default function App() {
   const handleStrokeEnd = useCallback((strokes: Point[][]) => {
     pendingStrokesRef.current = strokes
     if (!autoMode) return
-
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current)
-
     pendingKeyRef.current += 1
     setPendingKey(pendingKeyRef.current)
     setIsPending(true)
-
     autoTimerRef.current = setTimeout(() => {
       setIsPending(false)
       recognize(pendingStrokesRef.current)
@@ -202,55 +239,73 @@ export default function App() {
   }, [autoMode, recognize])
 
   const handleDrawStart = useCallback(() => {
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current)
-      autoTimerRef.current = null
-    }
+    if (autoTimerRef.current) { clearTimeout(autoTimerRef.current); autoTimerRef.current = null }
     setIsPending(false)
   }, [])
 
   const handleManualRecognize = useCallback(() => {
-    const strokes = canvasRef.current?.getStrokes() ?? []
-    recognize(strokes)
+    recognize(canvasRef.current?.getStrokes() ?? [])
   }, [recognize])
 
   const handleClearCanvas = useCallback(() => {
-    setResult(null)
-    setIsProcessing(false)
-    clearCanvas()
+    setResult(null); setIsProcessing(false); clearCanvas()
   }, [clearCanvas])
 
   const handleCopyText = useCallback(async () => {
     if (!builtText) return
-    try {
-      await navigator.clipboard.writeText(builtText)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch { /* clipboard not available */ }
+    try { await navigator.clipboard.writeText(builtText); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+    catch { /* clipboard not available */ }
   }, [builtText])
 
-  const handleClearText = useCallback(() => {
-    setBuiltText('')
-    handleClearCanvas()
-  }, [handleClearCanvas])
+  const handleClearText = useCallback(() => { setBuiltText(''); handleClearCanvas() }, [handleClearCanvas])
 
   const handleSpeakText = useCallback(() => {
-    if (!builtText) {
-      speak('Aucun texte à lire')
-      return
-    }
+    if (!builtText) { speak('Aucun texte à lire'); return }
     speak(builtText.toLowerCase())
   }, [builtText])
 
-  if (appMode === 'loading') {
+  // ── Claude send ───────────────────────────────────────────────────────────
+  const handleSendToClaude = useCallback(async () => {
+    if (!builtText.trim() || isSendingToClaude) return
+    if (!apiKeyHint) {
+      setShowApiKeyModal(true)
+      return
+    }
+    setClaudeError(null)
+    setIsSendingToClaude(true)
+    try {
+      const { response } = await api.claude.ask(builtText.trim())
+      setClaudeResponse(response)
+      setAudioText(response)
+    } catch (err) {
+      setClaudeError(err instanceof Error ? err.message : 'Erreur Claude')
+    } finally {
+      setIsSendingToClaude(false)
+    }
+  }, [builtText, isSendingToClaude, apiKeyHint])
+
+  // ── Render guards ─────────────────────────────────────────────────────────
+  if (appMode === 'checking-auth') {
+    return <Splash text="Vérification de la session…" />
+  }
+
+  if (appMode === 'auth') {
+    return <AuthPage onSuccess={handleAuthSuccess} />
+  }
+
+  if (appMode === 'api-key-setup') {
     return (
-      <div
-        className="flex items-center justify-center h-screen w-screen"
-        style={{ background: '#0a0a0a', color: '#444' }}
-      >
-        <div className="text-sm animate-pulse">Initialisation…</div>
-      </div>
+      <ApiKeyForm
+        currentHint={apiKeyHint}
+        onSaved={handleApiKeySaved}
+        onDeleted={handleApiKeyDeleted}
+        onSkip={() => setAppMode('loading')}
+      />
     )
+  }
+
+  if (appMode === 'loading') {
+    return <Splash text="Initialisation du moteur…" />
   }
 
   if (appMode === 'training') {
@@ -266,10 +321,8 @@ export default function App() {
   const trained = userProfile ? trainedLetters(userProfile) : []
 
   return (
-    <div
-      className="flex flex-col h-screen w-screen overflow-hidden"
-      style={{ background: '#0a0a0a' }}
-    >
+    <div className="flex flex-col h-screen w-screen overflow-hidden" style={{ background: '#0a0a0a' }}>
+
       {/* Header */}
       <header
         className="flex-none flex items-center justify-between px-4 py-3"
@@ -287,16 +340,27 @@ export default function App() {
           {userProfile && trained.length > 0 && (
             <div
               className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
-              style={{
-                background: 'rgba(16,185,129,0.1)',
-                border: '1px solid rgba(16,185,129,0.3)',
-                color: '#6ee7b7',
-              }}
+              style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: '#6ee7b7' }}
             >
               <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#10b981' }} />
               Profil · {trained.length}/26
             </div>
           )}
+
+          {/* API key indicator */}
+          <button
+            onClick={() => setShowApiKeyModal(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
+            style={{
+              background: apiKeyHint ? 'rgba(99,102,241,0.1)' : '#1a1a1a',
+              border: `1px solid ${apiKeyHint ? 'rgba(99,102,241,0.3)' : '#222'}`,
+              color: apiKeyHint ? '#a5b4fc' : '#555',
+              cursor: 'pointer',
+            }}
+            title={apiKeyHint ? `Clé : ${apiKeyHint}` : 'Configurer la clé API Claude'}
+          >
+            {apiKeyHint ? '🔑 API' : '⚙ API'}
+          </button>
 
           <button
             onClick={() => setAppMode('training')}
@@ -311,7 +375,7 @@ export default function App() {
               onClick={handleResetProfile}
               className="text-xs px-2 py-1.5 rounded-lg"
               style={{ color: '#444', background: 'none', border: '1px solid #1a1a1a' }}
-              title="Supprimer le profil et recommencer l'entraînement"
+              title="Supprimer le profil et recommencer"
             >
               ↺ Reset
             </button>
@@ -322,22 +386,29 @@ export default function App() {
             <button
               onClick={() => setAutoMode(v => !v)}
               className="relative rounded-full transition-colors duration-200"
-              style={{
-                width: 36, height: 20,
-                background: autoMode ? '#6366f1' : '#2a2a2a',
-                border: 'none', cursor: 'pointer',
-              }}
+              style={{ width: 36, height: 20, background: autoMode ? '#6366f1' : '#2a2a2a', border: 'none', cursor: 'pointer' }}
               aria-label={`Auto-reconnaissance ${autoMode ? 'activée' : 'désactivée'}`}
             >
               <span
                 className="absolute top-0.5 rounded-full transition-transform duration-200"
-                style={{
-                  width: 16, height: 16, background: '#fff', left: 2,
-                  transform: autoMode ? 'translateX(16px)' : 'translateX(0)',
-                }}
+                style={{ width: 16, height: 16, background: '#fff', left: 2, transform: autoMode ? 'translateX(16px)' : 'translateX(0)' }}
               />
             </button>
           </label>
+
+          {/* User + logout */}
+          {user && (
+            <div className="flex items-center gap-2 ml-1 pl-2" style={{ borderLeft: '1px solid #1a1a1a' }}>
+              <span className="text-xs max-w-28 truncate" style={{ color: '#555' }}>{user.email}</span>
+              <button
+                onClick={handleLogout}
+                className="text-xs px-2 py-1 rounded-lg"
+                style={{ color: '#444', background: '#111', border: '1px solid #1a1a1a', cursor: 'pointer' }}
+              >
+                Déco.
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -349,13 +420,7 @@ export default function App() {
         {/* Text display */}
         <div
           className="flex-1 min-w-0 px-3 py-2 rounded-lg overflow-x-auto"
-          style={{
-            background: '#111',
-            border: '1px solid #222',
-            minHeight: 44,
-            display: 'flex',
-            alignItems: 'center',
-          }}
+          style={{ background: '#111', border: '1px solid #222', minHeight: 44, display: 'flex', alignItems: 'center' }}
         >
           {builtText ? (
             <span style={{ color: '#f5f5f5', fontFamily: 'monospace', fontSize: 20, whiteSpace: 'pre', letterSpacing: 1 }}>
@@ -369,7 +434,29 @@ export default function App() {
           )}
         </div>
 
-        {/* Copy button */}
+        {/* Envoyer à Claude */}
+        <button
+          onClick={handleSendToClaude}
+          disabled={!builtText.trim() || isSendingToClaude}
+          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          style={{
+            background: isSendingToClaude
+              ? '#2a2a2a'
+              : builtText.trim()
+              ? 'rgba(16,185,129,0.85)'
+              : '#1a1a1a',
+            color: builtText.trim() && !isSendingToClaude ? '#fff' : '#444',
+            border: 'none',
+            cursor: builtText.trim() && !isSendingToClaude ? 'pointer' : 'not-allowed',
+            minWidth: 100,
+            justifyContent: 'center',
+          }}
+          title={!apiKeyHint ? 'Configurez votre clé API Claude d\'abord' : undefined}
+        >
+          {isSendingToClaude ? '⏳ Envoi…' : '✉ Envoyer'}
+        </button>
+
+        {/* Copy */}
         <button
           onClick={handleCopyText}
           disabled={!builtText}
@@ -386,23 +473,16 @@ export default function App() {
           {copied ? '✓ Copié' : '⎘ Copier'}
         </button>
 
-        {/* Speak button */}
+        {/* Énoncer */}
         <button
           onClick={handleSpeakText}
           className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
-          style={{
-            background: 'rgba(251,191,36,0.12)',
-            color: '#fbbf24',
-            border: '1px solid rgba(251,191,36,0.3)',
-            cursor: 'pointer',
-            minWidth: 90,
-            justifyContent: 'center',
-          }}
+          style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', cursor: 'pointer', minWidth: 90, justifyContent: 'center' }}
         >
           🔊 Énoncer
         </button>
 
-        {/* Clear text button */}
+        {/* Effacer */}
         <button
           onClick={handleClearText}
           disabled={!builtText}
@@ -419,6 +499,17 @@ export default function App() {
           ✕ Effacer
         </button>
       </div>
+
+      {/* Claude error banner */}
+      {claudeError && (
+        <div
+          className="flex-none flex items-center justify-between px-4 py-2 text-sm"
+          style={{ background: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}
+        >
+          <span>{claudeError}</span>
+          <button onClick={() => setClaudeError(null)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden min-h-0">
@@ -438,11 +529,7 @@ export default function App() {
             {isPending && autoMode && (
               <div
                 key={pendingKey}
-                style={{
-                  height: '100%',
-                  background: '#6366f1',
-                  animation: `recognition-progress ${AUTO_RECOGNIZE_DELAY}ms linear forwards`,
-                }}
+                style={{ height: '100%', background: '#6366f1', animation: `recognition-progress ${AUTO_RECOGNIZE_DELAY}ms linear forwards` }}
               />
             )}
           </div>
@@ -456,8 +543,7 @@ export default function App() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors"
               style={{ background: '#1a1a1a', color: '#888', border: '1px solid #222' }}
             >
-              <span>✕</span>
-              <span>Effacer dessin</span>
+              <span>✕</span><span>Effacer dessin</span>
             </button>
 
             {!autoMode && (
@@ -479,9 +565,7 @@ export default function App() {
 
             {autoMode && (
               <span className="text-xs ml-auto" style={{ color: isPending ? '#6366f1' : '#444' }}>
-                {isPending
-                  ? 'Attente fin du tracé…'
-                  : `Auto · ${AUTO_RECOGNIZE_DELAY / 1000}s après le dernier trait`}
+                {isPending ? 'Attente fin du tracé…' : `Auto · ${AUTO_RECOGNIZE_DELAY / 1000}s après le dernier trait`}
               </span>
             )}
           </div>
@@ -513,18 +597,56 @@ export default function App() {
         </div>
       </div>
 
+      {/* Audio player (visible only when a Claude response exists) */}
+      <AudioPlayer
+        text={audioText}
+        autoPlay
+        onDismiss={() => setAudioText(null)}
+      />
+
       {/* Gesture hint bar */}
       <div
         className="flex-none flex items-center justify-center gap-6 px-4 py-1.5"
         style={{ borderTop: '1px solid #111', background: '#080808' }}
       >
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>
-          →→ trait horizontal : espace
-        </span>
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>
-          ←← trait horizontal : suppr.
-        </span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>→→ trait horizontal : espace</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>←← trait horizontal : suppr.</span>
       </div>
+
+      {/* Claude response modal */}
+      {claudeResponse && (
+        <ResponseModal
+          response={claudeResponse}
+          onClose={() => setClaudeResponse(null)}
+          onSpeak={(text) => setAudioText(text)}
+        />
+      )}
+
+      {/* API key management modal */}
+      {showApiKeyModal && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+          onClick={e => { if (e.target === e.currentTarget) setShowApiKeyModal(false) }}
+        >
+          <div className="w-full max-w-md">
+            <ApiKeyForm
+              currentHint={apiKeyHint}
+              onSaved={handleApiKeySaved}
+              onDeleted={handleApiKeyDeleted}
+              onSkip={() => setShowApiKeyModal(false)}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Splash({ text }: { text: string }) {
+  return (
+    <div className="flex items-center justify-center h-screen w-screen" style={{ background: '#0a0a0a', color: '#444' }}>
+      <div className="text-sm animate-pulse">{text}</div>
     </div>
   )
 }
@@ -532,13 +654,7 @@ export default function App() {
 function InkLogo() {
   return (
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M6 22 L14 5 L22 22 M9.5 16 L18.5 16"
-        stroke="#6366f1"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M6 22 L14 5 L22 22 M9.5 16 L18.5 16" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
