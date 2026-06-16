@@ -2,6 +2,9 @@
   "name": "askink-server",
   "version": "1.0.0",
   "description": "AskInkAI backend — auth, API key vault, Claude proxy",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
