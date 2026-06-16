@@ -46,8 +46,9 @@ function speakChar(char: string) {
 }
 
 function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'backspace' | null {
-  if (strokes.length !== 1) return null
-  const stroke = strokes[0]
+  if (strokes.length === 0) return null
+  // Check only the most recent stroke — previous uncleared strokes must not block gesture detection
+  const stroke = strokes[strokes.length - 1]
   if (stroke.length < 4) return null
   const first = stroke[0]
   const last = stroke[stroke.length - 1]
@@ -438,8 +439,9 @@ export default function App() {
         <button
           onClick={handleSendToClaude}
           disabled={!builtText.trim() || isSendingToClaude}
-          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          className="flex-none flex items-center gap-1.5 px-5 rounded-xl text-sm font-semibold transition-all"
           style={{
+            height: 52,
             background: isSendingToClaude
               ? '#2a2a2a'
               : builtText.trim()
@@ -448,7 +450,7 @@ export default function App() {
             color: builtText.trim() && !isSendingToClaude ? '#fff' : '#444',
             border: 'none',
             cursor: builtText.trim() && !isSendingToClaude ? 'pointer' : 'not-allowed',
-            minWidth: 100,
+            minWidth: 110,
             justifyContent: 'center',
           }}
           title={!apiKeyHint ? 'Configurez votre clé API Claude d\'abord' : undefined}
@@ -460,13 +462,14 @@ export default function App() {
         <button
           onClick={handleCopyText}
           disabled={!builtText}
-          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          className="flex-none flex items-center gap-1.5 px-5 rounded-xl text-sm font-semibold transition-all"
           style={{
+            height: 52,
             background: copied ? 'rgba(16,185,129,0.2)' : builtText ? '#6366f1' : '#1a1a1a',
             color: copied ? '#6ee7b7' : builtText ? '#fff' : '#333',
             border: copied ? '1px solid rgba(16,185,129,0.4)' : 'none',
             cursor: builtText ? 'pointer' : 'not-allowed',
-            minWidth: 90,
+            minWidth: 100,
             justifyContent: 'center',
           }}
         >
@@ -476,8 +479,8 @@ export default function App() {
         {/* Énoncer */}
         <button
           onClick={handleSpeakText}
-          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
-          style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', cursor: 'pointer', minWidth: 90, justifyContent: 'center' }}
+          className="flex-none flex items-center gap-1.5 px-5 rounded-xl text-sm font-semibold transition-all"
+          style={{ height: 52, background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', cursor: 'pointer', minWidth: 100, justifyContent: 'center' }}
         >
           🔊 Énoncer
         </button>
@@ -486,13 +489,14 @@ export default function App() {
         <button
           onClick={handleClearText}
           disabled={!builtText}
-          className="flex-none flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+          className="flex-none flex items-center gap-1.5 px-5 rounded-xl text-sm font-semibold transition-all"
           style={{
+            height: 52,
             background: builtText ? 'rgba(239,68,68,0.15)' : '#1a1a1a',
             color: builtText ? '#f87171' : '#333',
             border: builtText ? '1px solid rgba(239,68,68,0.3)' : '1px solid #1a1a1a',
             cursor: builtText ? 'pointer' : 'not-allowed',
-            minWidth: 90,
+            minWidth: 100,
             justifyContent: 'center',
           }}
         >

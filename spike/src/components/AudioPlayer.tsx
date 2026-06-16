@@ -70,9 +70,9 @@ export default function AudioPlayer({ text, autoPlay = false, onDismiss }: Props
       {/* Restart */}
       <button
         onClick={handleRestart}
-        className="flex-none flex items-center justify-center rounded-lg text-sm"
+        className="flex-none flex items-center justify-center rounded-xl text-base"
         style={{
-          width: 34, height: 34,
+          width: 48, height: 52,
           background: '#1a1a1a',
           border: '1px solid #222',
           color: '#888',
@@ -86,9 +86,9 @@ export default function AudioPlayer({ text, autoPlay = false, onDismiss }: Props
       {/* Play / Pause */}
       <button
         onClick={handlePlayPause}
-        className="flex-none flex items-center justify-center rounded-lg text-base font-bold"
+        className="flex-none flex items-center justify-center rounded-xl text-lg font-bold"
         style={{
-          width: 40, height: 40,
+          width: 56, height: 52,
           background: isPlaying && !isPaused ? '#6366f1' : '#1a1a1a',
           border: `1px solid ${isPlaying && !isPaused ? '#6366f1' : '#222'}`,
           color: isPlaying && !isPaused ? '#fff' : '#888',

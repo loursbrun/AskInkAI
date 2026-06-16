@@ -32,6 +32,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     const message = await client.messages.create({
       model,
       max_tokens: 1024,
+      system: 'Tu es un assistant serviable et concis. Réponds toujours en français, quelle que soit la langue de la question.',
       messages: [{ role: 'user', content: question.trim() }],
     })
 
