@@ -2,6 +2,8 @@
 
 > Pose tes questions à Claude en dessinant les lettres. Sans parler. Sans clavier.
 
+**[→ Démo live](https://loursbrun.github.io/AskInkAI/)**
+
 AskInkAI est une webapp qui permet de dialoguer avec l'IA Claude en dessinant les lettres à la main sur un écran tactile. Chaque lettre dessinée est reconnue et ajoutée à la question. L'utilisateur envoie ensuite sa question et reçoit une réponse lisible et écoutable.
 
 ---
