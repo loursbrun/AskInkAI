@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: askink-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    disk:
+      name: askink-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATA_DIR
+        value: /var/data
+      - key: FRONTEND_URL
+        value: https://loursbrun.github.io
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
