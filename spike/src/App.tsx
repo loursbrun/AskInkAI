@@ -15,7 +15,6 @@ import TrainingScreen from './components/TrainingScreen'
 import AuthPage from './components/AuthPage'
 import ApiKeyForm from './components/ApiKeyForm'
 import ResponseModal from './components/ResponseModal'
-import AudioPlayer from './components/AudioPlayer'
 import { api, type User } from './api/client'
 
 const AUTO_RECOGNIZE_DELAY = 1000
@@ -45,9 +44,10 @@ function speakChar(char: string) {
   speak(char.toLowerCase())
 }
 
-function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'backspace' | null {
+type Gesture = 'space' | 'backspace' | 'send' | 'clear' | 'play'
+
+function detectGesture(strokes: Point[][], canvasWidth: number, canvasHeight: number): Gesture | null {
   if (strokes.length === 0) return null
-  // Check only the most recent stroke — previous uncleared strokes must not block gesture detection
   const stroke = strokes[strokes.length - 1]
   if (stroke.length < 4) return null
   const first = stroke[0]
@@ -56,6 +56,31 @@ function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'back
   const deltaY = last.y - first.y
   const absDeltaX = Math.abs(deltaX)
   const absDeltaY = Math.abs(deltaY)
+
+  // ◁ triangle (play): vertex on the left, both arms extend rightward
+  const xs = stroke.map(p => p.x)
+  const minX = Math.min(...xs)
+  const minXIdx = xs.indexOf(minX)
+  const minXPoint = stroke[minXIdx]
+  const relativeMidPos = minXIdx / stroke.length
+  const vertexYDrift = Math.abs(minXPoint.y - (first.y + last.y) / 2)
+  if (
+    relativeMidPos > 0.2 && relativeMidPos < 0.8 &&
+    first.x - minX > canvasWidth * 0.12 &&
+    last.x - minX > canvasWidth * 0.12 &&
+    Math.max(...xs) - minX > canvasWidth * 0.18 &&
+    vertexYDrift < canvasHeight * 0.25 &&
+    absDeltaY < canvasHeight * 0.3
+  ) {
+    return 'play'
+  }
+
+  // ↑ / ↓ vertical gestures: up = clear, down = send
+  if (absDeltaY > absDeltaX * 1.5 && absDeltaY > canvasHeight * 0.25) {
+    return deltaY < 0 ? 'clear' : 'send'
+  }
+
+  // → / ← horizontal gestures: right = space, left = backspace
   if (absDeltaX < absDeltaY * 3) return null
   if (absDeltaX < canvasWidth * 0.3) return null
   return deltaX > 0 ? 'space' : 'backspace'
@@ -75,7 +100,6 @@ export default function App() {
   const [claudeResponse, setClaudeResponse] = useState<string | null>(null)
   const [isSendingToClaude, setIsSendingToClaude] = useState(false)
   const [claudeError, setClaudeError] = useState<string | null>(null)
-  const [audioText, setAudioText] = useState<string | null>(null)
 
   // ── Recognition app state ─────────────────────────────────────────────────
   const [appMode, setAppMode] = useState<AppMode>('checking-auth')
@@ -199,12 +223,28 @@ export default function App() {
   const recognize = useCallback(async (strokes: Point[][]) => {
     if (isProcessing || strokes.length === 0) return
     const size = canvasRef.current?.getCanvasSize() ?? { width: 400, height: 400 }
-    const gesture = detectGesture(strokes, size.width)
+    const gesture = detectGesture(strokes, size.width, size.height)
     if (gesture !== null) {
-      if (gesture === 'space') { setBuiltText(t => t + ' '); speakChar(' ') }
-      else { setBuiltText(t => t.slice(0, -1)) }
       setResult(null)
       clearCanvas()
+      if (gesture === 'space') { setBuiltText(t => t + ' '); speakChar(' ') }
+      else if (gesture === 'backspace') { setBuiltText(t => t.slice(0, -1)) }
+      else if (gesture === 'clear') { setBuiltText('') }
+      else if (gesture === 'play') { if (builtText) speak(builtText) }
+      else if (gesture === 'send') {
+        if (!builtText.trim() || isSendingToClaude) return
+        if (!apiKeyHint) { setShowApiKeyModal(true); return }
+        setClaudeError(null)
+        setIsSendingToClaude(true)
+        try {
+          const { response } = await api.claude.ask(builtText.trim())
+          setClaudeResponse(response)
+        } catch (err) {
+          setClaudeError(err instanceof Error ? err.message : 'Erreur Claude')
+        } finally {
+          setIsSendingToClaude(false)
+        }
+      }
       return
     }
     setIsProcessing(true)
@@ -225,7 +265,7 @@ export default function App() {
     } finally {
       setIsProcessing(false)
     }
-  }, [isProcessing, clearCanvas])
+  }, [isProcessing, clearCanvas, builtText, isSendingToClaude, apiKeyHint])
 
   const handleStrokeEnd = useCallback((strokes: Point[][]) => {
     pendingStrokesRef.current = strokes
@@ -278,7 +318,6 @@ export default function App() {
     try {
       const { response } = await api.claude.ask(builtText.trim())
       setClaudeResponse(response)
-      setAudioText(response)
     } catch (err) {
       setClaudeError(err instanceof Error ? err.message : 'Erreur Claude')
     } finally {
@@ -625,28 +664,23 @@ export default function App() {
         </div>
       </div>
 
-      {/* Audio player (visible only when a Claude response exists) */}
-      <AudioPlayer
-        text={audioText}
-        autoPlay
-        onDismiss={() => setAudioText(null)}
-      />
-
       {/* Gesture hint bar */}
       <div
-        className="flex-none flex items-center justify-center gap-6 px-4 py-1.5"
+        className="flex-none flex items-center justify-center gap-4 px-4 py-1.5 flex-wrap"
         style={{ borderTop: '1px solid #111', background: '#080808' }}
       >
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>→→ trait horizontal : espace</span>
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>←← trait horizontal : suppr.</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>→ espace</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>← suppr.</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>↑ effacer</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>↓ envoyer</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>◁ lire</span>
       </div>
 
       {/* Claude response modal */}
       {claudeResponse && (
         <ResponseModal
           response={claudeResponse}
-          onClose={() => setClaudeResponse(null)}
-          onSpeak={(text) => setAudioText(text)}
+          onClose={() => { setClaudeResponse(null); window.speechSynthesis.cancel() }}
         />
       )}
 

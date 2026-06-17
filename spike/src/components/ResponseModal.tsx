@@ -1,40 +1,79 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
+
+type SpeechState = 'speaking' | 'paused' | 'ended'
 
 interface Props {
   response: string
   onClose: () => void
-  onSpeak: (text: string) => void
 }
 
-export default function ResponseModal({ response, onClose, onSpeak }: Props) {
-  const dialogRef = useRef<HTMLDivElement>(null)
+export default function ResponseModal({ response, onClose }: Props) {
+  const [speechState, setSpeechState] = useState<SpeechState>('speaking')
 
-  // Close on Escape
+  const startSpeech = () => {
+    if (!('speechSynthesis' in window)) return
+    window.speechSynthesis.cancel()
+    const utt = new SpeechSynthesisUtterance(response)
+    utt.lang = 'fr-FR'
+    utt.onstart = () => setSpeechState('speaking')
+    utt.onpause = () => setSpeechState('paused')
+    utt.onresume = () => setSpeechState('speaking')
+    utt.onend = () => setSpeechState('ended')
+    utt.onerror = () => setSpeechState('ended')
+    setSpeechState('speaking')
+    window.speechSynthesis.speak(utt)
+  }
+
+  // Auto-start on open
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    startSpeech()
+    return () => { window.speechSynthesis.cancel() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Escape key
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // Close on backdrop click
-  const handleBackdrop = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose()
+  const handleTextClick = () => {
+    if (!('speechSynthesis' in window)) return
+    if (speechState === 'speaking') {
+      window.speechSynthesis.pause()
+      setSpeechState('paused')
+    } else if (speechState === 'paused') {
+      window.speechSynthesis.resume()
+      setSpeechState('speaking')
+    } else {
+      startSpeech()
+    }
   }
+
+  const icon = speechState === 'speaking' ? '⏸' : speechState === 'paused' ? '▶' : '↺'
+  const hint = speechState === 'speaking' ? 'Cliquer pour mettre en pause'
+    : speechState === 'paused' ? 'Cliquer pour reprendre'
+    : 'Cliquer pour relire'
+
+  const iconBg = speechState === 'speaking'
+    ? 'rgba(99,102,241,0.85)'
+    : speechState === 'paused'
+    ? 'rgba(251,191,36,0.2)'
+    : 'rgba(16,185,129,0.2)'
+
+  const iconColor = speechState === 'speaking' ? '#fff'
+    : speechState === 'paused' ? '#fbbf24'
+    : '#6ee7b7'
 
   return (
     <div
       className="fixed inset-0 flex items-center justify-center z-50 p-4"
       style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
-      onClick={handleBackdrop}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
-        ref={dialogRef}
         className="w-full max-w-lg rounded-2xl flex flex-col"
-        style={{
-          background: '#0d0d0d',
-          border: '1px solid #222',
-          maxHeight: '80vh',
-        }}
+        style={{ background: '#0d0d0d', border: '1px solid #222', maxHeight: '80vh' }}
       >
         {/* Header */}
         <div
@@ -60,14 +99,45 @@ export default function ResponseModal({ response, onClose, onSpeak }: Props) {
           </button>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4">
+        {/* Body — click to pause / resume / restart */}
+        <div
+          className="flex-1 overflow-y-auto px-5 py-4 relative"
+          onClick={handleTextClick}
+          title={hint}
+          style={{ cursor: 'pointer' }}
+        >
           <p
-            className="text-sm leading-relaxed whitespace-pre-wrap"
-            style={{ color: '#d4d4d4' }}
+            className="text-sm leading-relaxed whitespace-pre-wrap select-none"
+            style={{
+              color: '#d4d4d4',
+              opacity: speechState === 'paused' ? 0.55 : 1,
+              transition: 'opacity 0.25s',
+            }}
           >
             {response}
           </p>
+
+          {/* State badge */}
+          <div
+            style={{
+              position: 'absolute',
+              top: 10,
+              right: 14,
+              width: 30,
+              height: 30,
+              borderRadius: '50%',
+              background: iconBg,
+              border: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 13,
+              color: iconColor,
+              transition: 'all 0.2s',
+            }}
+          >
+            {icon}
+          </div>
         </div>
 
         {/* Footer */}
@@ -76,26 +146,9 @@ export default function ResponseModal({ response, onClose, onSpeak }: Props) {
           style={{ borderTop: '1px solid #1a1a1a' }}
         >
           <button
-            onClick={() => onSpeak(response)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm"
-            style={{
-              background: 'rgba(251,191,36,0.1)',
-              color: '#fbbf24',
-              border: '1px solid rgba(251,191,36,0.25)',
-              cursor: 'pointer',
-            }}
-          >
-            🔊 Lire
-          </button>
-          <button
             onClick={() => navigator.clipboard.writeText(response).catch(() => {})}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm"
-            style={{
-              background: '#1a1a1a',
-              color: '#888',
-              border: '1px solid #222',
-              cursor: 'pointer',
-            }}
+            style={{ background: '#1a1a1a', color: '#888', border: '1px solid #222', cursor: 'pointer' }}
           >
             ⎘ Copier
           </button>
