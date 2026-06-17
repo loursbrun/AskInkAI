@@ -1,6 +1,6 @@
 // Centralised API client. All requests include credentials (JWT httpOnly cookie).
 // VITE_API_URL can be set in production to point to a remote backend.
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ??
+const BASE = (import.meta.env.VITE_API_URL as string | undefined) ||
   (import.meta.env.PROD ? 'https://askink-server.onrender.com' : '')
 
 export interface User {
