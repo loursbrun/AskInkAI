@@ -17,7 +17,13 @@ import DrawingCanvas, { type DrawingCanvasHandle } from './DrawingCanvas'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 const DIGITS = '0123456789'.split('')
-const ALL_CHARS = [...LETTERS, ...DIGITS]
+const ARROW_CHARS = ['↑', '→', '↓']
+const ARROW_ACTIONS: Record<string, string> = {
+  '↑': 'Effacer le texte',
+  '→': 'Lire le texte',
+  '↓': 'Envoyer à Claude',
+}
+const ALL_CHARS = [...LETTERS, ...DIGITS, ...ARROW_CHARS]
 // Délai après le DERNIER trait — assez long pour les lettres multi-traits (A, E, H, I, T…)
 const CAPTURE_DELAY = 1000
 
@@ -189,7 +195,9 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
   }, [count, letterIdx, goNext])
 
   const progressPct = (trainedCount / 26) * 100
-  const isDigitChar = letterIdx >= 26
+  const isDigitChar = letterIdx >= 26 && letterIdx < 36
+  const isArrowChar = letterIdx >= 36
+  const trainedArrowCount = ARROW_CHARS.filter(a => sampleCount(profile, a) >= MIN_SAMPLES).length
 
   return (
     <div
@@ -213,7 +221,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
             Apprentissage de l'écriture
           </div>
           <div className="text-xs" style={{ color: '#444' }}>
-            {trainedCount}/26 lettres · {trainedDigitCount}/10 chiffres
+            {trainedCount}/26 lettres · {trainedDigitCount}/10 chiffres · {trainedArrowCount}/3 gestes
           </div>
         </div>
 
@@ -248,7 +256,9 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
             style={{ borderBottom: '1px solid #1a1a1a' }}
           >
             <div className="text-xs mb-1" style={{ color: '#555' }}>
-              Dessine la lettre
+              {isArrowChar
+                ? `Geste : ${ARROW_ACTIONS[letter]}`
+                : 'Dessine la lettre'}
             </div>
 
             {/* Big letter display */}
@@ -285,7 +295,7 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
               style={{ color: isLetterDone ? '#6ee7b7' : isPending ? '#6366f1' : '#555' }}
             >
               {isLetterDone
-                ? `✓ ${isDigitChar ? 'Chiffre' : 'Lettre'} appris — passage automatique…`
+                ? `✓ ${isArrowChar ? 'Geste' : isDigitChar ? 'Chiffre' : 'Lettre'} appris — passage automatique…`
                 : isPending
                 ? 'Attente fin du tracé…'
                 : count === 0
@@ -450,13 +460,45 @@ export default function TrainingScreen({ initialProfile, onComplete, onBack }: P
             })}
           </div>
 
+          <div className="text-xs mt-3 mb-2" style={{ color: '#444', fontFamily: 'monospace' }}>
+            GESTES
+          </div>
+          <div className="flex flex-col gap-1">
+            {ARROW_CHARS.map((char, i) => {
+              const globalIdx = 36 + i
+              const n = sampleCount(profile, char)
+              const done = n >= TARGET_SAMPLES
+              const current = globalIdx === letterIdx
+              return (
+                <button
+                  key={char}
+                  onClick={() => handleSelectChar(char, globalIdx)}
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm transition-colors"
+                  style={{
+                    background: current ? 'rgba(99,102,241,0.2)' : done ? 'rgba(16,185,129,0.08)' : '#111',
+                    border: `1px solid ${current ? 'rgba(99,102,241,0.5)' : done ? 'rgba(16,185,129,0.3)' : '#1a1a1a'}`,
+                    color: done ? '#6ee7b7' : current ? '#c7d2fe' : '#666',
+                  }}
+                >
+                  <span className="font-mono font-semibold text-base">{char}</span>
+                  <span className="flex-1 text-xs text-left" style={{ color: done ? '#6ee7b7' : current ? '#a5b4fc' : '#444' }}>
+                    {ARROW_ACTIONS[char]}
+                  </span>
+                  <span className="text-xs" style={{ color: done ? '#6ee7b7' : '#333' }}>
+                    {done ? '✓' : n > 0 ? `${n}` : '—'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
           {totalSamples(profile) > 0 && (
             <div className="mt-3 pt-3" style={{ borderTop: '1px solid #1a1a1a' }}>
               <div className="text-xs mb-1" style={{ color: '#444' }}>
                 {totalSamples(profile)} exemples
               </div>
               <div className="text-xs" style={{ color: '#555' }}>
-                {trainedCount}/26 lettres · {trainedDigitCount}/10 chiffres
+                {trainedCount}/26 lettres · {trainedDigitCount}/10 chiffres · {trainedArrowCount}/3 gestes
               </div>
             </div>
           )}

@@ -44,9 +44,8 @@ function speakChar(char: string) {
   speak(char.toLowerCase())
 }
 
-type Gesture = 'backspace' | 'send' | 'clear' | 'play'
-
-function detectGesture(strokes: Point[][], canvasWidth: number, canvasHeight: number): Gesture | null {
+// Simple single-stroke swipes only — arrows are recognized by the ML engine like letters
+function detectGesture(strokes: Point[][], canvasWidth: number): 'space' | 'backspace' | null {
   if (strokes.length === 0) return null
   const stroke = strokes[strokes.length - 1]
   if (stroke.length < 4) return null
@@ -56,16 +55,9 @@ function detectGesture(strokes: Point[][], canvasWidth: number, canvasHeight: nu
   const deltaY = last.y - first.y
   const absDeltaX = Math.abs(deltaX)
   const absDeltaY = Math.abs(deltaY)
-
-  // ↑ / ↓ vertical gestures: up = clear, down = send
-  if (absDeltaY > absDeltaX * 1.5 && absDeltaY > canvasHeight * 0.25) {
-    return deltaY < 0 ? 'clear' : 'send'
-  }
-
-  // → / ← horizontal gestures: right = play, left = backspace
   if (absDeltaX < absDeltaY * 3) return null
   if (absDeltaX < canvasWidth * 0.3) return null
-  return deltaX > 0 ? 'play' : 'backspace'
+  return deltaX > 0 ? 'space' : 'backspace'
 }
 
 export default function App() {
@@ -205,32 +197,49 @@ export default function App() {
   const recognize = useCallback(async (strokes: Point[][]) => {
     if (isProcessing || strokes.length === 0) return
     const size = canvasRef.current?.getCanvasSize() ?? { width: 400, height: 400 }
-    const gesture = detectGesture(strokes, size.width, size.height)
-    if (gesture !== null) {
-      setResult(null)
-      clearCanvas()
-      if (gesture === 'backspace') { setBuiltText(t => t.slice(0, -1)) }
-      else if (gesture === 'clear') { setBuiltText('') }
-      else if (gesture === 'play') { if (builtText) speak(builtText) }
-      else if (gesture === 'send') {
-        if (!builtText.trim() || isSendingToClaude) return
-        if (!apiKeyHint) { setShowApiKeyModal(true); return }
-        setClaudeError(null)
-        setIsSendingToClaude(true)
-        try {
-          const { response } = await api.claude.ask(builtText.trim())
-          setClaudeResponse(response)
-        } catch (err) {
-          setClaudeError(err instanceof Error ? err.message : 'Erreur Claude')
-        } finally {
-          setIsSendingToClaude(false)
-        }
-      }
+
+    // Instant swipe gestures (space / backspace) — before ML
+    const swipe = detectGesture(strokes, size.width)
+    if (swipe !== null) {
+      setResult(null); clearCanvas()
+      if (swipe === 'space') { setBuiltText(t => t + ' '); speakChar(' ') }
+      else { setBuiltText(t => t.slice(0, -1)) }
       return
     }
+
     setIsProcessing(true)
     try {
       const r = await engine.recognize(strokes, size.width, size.height)
+
+      // Arrow commands — recognized by ML engine (trained like letters)
+      if (r.letter === '↑') {
+        setBuiltText(''); setResult(null); clearCanvas(); return
+      }
+      if (r.letter === '→') {
+        if (builtText) speak(builtText)
+        setResult(null); clearCanvas(); return
+      }
+      if (r.letter === '↓') {
+        setResult(null); clearCanvas()
+        if (builtText.trim() && !isSendingToClaude) {
+          if (!apiKeyHint) { setShowApiKeyModal(true) }
+          else {
+            setClaudeError(null)
+            setIsSendingToClaude(true)
+            try {
+              const { response } = await api.claude.ask(builtText.trim())
+              setClaudeResponse(response)
+            } catch (err) {
+              setClaudeError(err instanceof Error ? err.message : 'Erreur Claude')
+            } finally {
+              setIsSendingToClaude(false)
+            }
+          }
+        }
+        return
+      }
+
+      // Normal letter
       setResult(r)
       historySeqRef.current += 1
       setHistory(prev => {
@@ -650,10 +659,7 @@ export default function App() {
         className="flex-none flex items-center justify-center gap-4 px-4 py-1.5 flex-wrap"
         style={{ borderTop: '1px solid #111', background: '#080808' }}
       >
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>→ lire</span>
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>← suppr.</span>
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>↑ effacer</span>
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>↓ envoyer</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>→ espace · ← suppr. · dessine ↑↓→ comme les lettres</span>
       </div>
 
       {/* Claude response modal */}
