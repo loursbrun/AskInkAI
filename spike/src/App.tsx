@@ -44,7 +44,7 @@ function speakChar(char: string) {
   speak(char.toLowerCase())
 }
 
-type Gesture = 'space' | 'backspace' | 'send' | 'clear' | 'play'
+type Gesture = 'backspace' | 'send' | 'clear' | 'play'
 
 function detectGesture(strokes: Point[][], canvasWidth: number, canvasHeight: number): Gesture | null {
   if (strokes.length === 0) return null
@@ -57,33 +57,15 @@ function detectGesture(strokes: Point[][], canvasWidth: number, canvasHeight: nu
   const absDeltaX = Math.abs(deltaX)
   const absDeltaY = Math.abs(deltaY)
 
-  // ◁ triangle (play): vertex on the left, both arms extend rightward
-  const xs = stroke.map(p => p.x)
-  const minX = Math.min(...xs)
-  const minXIdx = xs.indexOf(minX)
-  const minXPoint = stroke[minXIdx]
-  const relativeMidPos = minXIdx / stroke.length
-  const vertexYDrift = Math.abs(minXPoint.y - (first.y + last.y) / 2)
-  if (
-    relativeMidPos > 0.2 && relativeMidPos < 0.8 &&
-    first.x - minX > canvasWidth * 0.12 &&
-    last.x - minX > canvasWidth * 0.12 &&
-    Math.max(...xs) - minX > canvasWidth * 0.18 &&
-    vertexYDrift < canvasHeight * 0.25 &&
-    absDeltaY < canvasHeight * 0.3
-  ) {
-    return 'play'
-  }
-
   // ↑ / ↓ vertical gestures: up = clear, down = send
   if (absDeltaY > absDeltaX * 1.5 && absDeltaY > canvasHeight * 0.25) {
     return deltaY < 0 ? 'clear' : 'send'
   }
 
-  // → / ← horizontal gestures: right = space, left = backspace
+  // → / ← horizontal gestures: right = play, left = backspace
   if (absDeltaX < absDeltaY * 3) return null
   if (absDeltaX < canvasWidth * 0.3) return null
-  return deltaX > 0 ? 'space' : 'backspace'
+  return deltaX > 0 ? 'play' : 'backspace'
 }
 
 export default function App() {
@@ -227,8 +209,7 @@ export default function App() {
     if (gesture !== null) {
       setResult(null)
       clearCanvas()
-      if (gesture === 'space') { setBuiltText(t => t + ' '); speakChar(' ') }
-      else if (gesture === 'backspace') { setBuiltText(t => t.slice(0, -1)) }
+      if (gesture === 'backspace') { setBuiltText(t => t.slice(0, -1)) }
       else if (gesture === 'clear') { setBuiltText('') }
       else if (gesture === 'play') { if (builtText) speak(builtText) }
       else if (gesture === 'send') {
@@ -669,11 +650,10 @@ export default function App() {
         className="flex-none flex items-center justify-center gap-4 px-4 py-1.5 flex-wrap"
         style={{ borderTop: '1px solid #111', background: '#080808' }}
       >
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>→ espace</span>
+        <span className="text-xs" style={{ color: '#2a2a2a' }}>→ lire</span>
         <span className="text-xs" style={{ color: '#2a2a2a' }}>← suppr.</span>
         <span className="text-xs" style={{ color: '#2a2a2a' }}>↑ effacer</span>
         <span className="text-xs" style={{ color: '#2a2a2a' }}>↓ envoyer</span>
-        <span className="text-xs" style={{ color: '#2a2a2a' }}>◁ lire</span>
       </div>
 
       {/* Claude response modal */}
