@@ -8,18 +8,9 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 const router = Router()
 
 const BCRYPT_ROUNDS = 12
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000 // 7 days
 
-function setAuthCookie(res: Response, userId: string): void {
-  const secret = process.env.JWT_SECRET!
-  const token = jwt.sign({ userId }, secret, { expiresIn: '7d' })
-  const isProduction = process.env.NODE_ENV === 'production'
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax',
-    maxAge: COOKIE_MAX_AGE,
-  })
+function makeToken(userId: string): string {
+  return jwt.sign({ userId }, process.env.JWT_SECRET!, { expiresIn: '7d' })
 }
 
 // POST /api/auth/register
@@ -47,8 +38,7 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS)
     users.create.run(id, email.toLowerCase().trim(), passwordHash, Date.now())
 
-    setAuthCookie(res, id)
-    res.status(201).json({ id, email: email.toLowerCase().trim() })
+    res.status(201).json({ token: makeToken(id), id, email: email.toLowerCase().trim() })
   } catch {
     res.status(500).json({ error: 'Erreur lors de la création du compte' })
   }
@@ -73,8 +63,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     return
   }
 
-  setAuthCookie(res, user.id)
-  res.json({ id: user.id, email: user.email })
+  res.json({ token: makeToken(user.id), id: user.id, email: user.email })
 })
 
 // POST /api/auth/logout

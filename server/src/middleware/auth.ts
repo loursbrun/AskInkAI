@@ -6,7 +6,11 @@ export interface AuthRequest extends Request {
 }
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
-  const token = req.cookies?.token as string | undefined
+  // Accept Bearer header (primary) or cookie (legacy)
+  const authHeader = req.headers.authorization
+  const token = (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null)
+    ?? req.cookies?.token as string | undefined
+
   if (!token) {
     res.status(401).json({ error: 'Non authentifié' })
     return
