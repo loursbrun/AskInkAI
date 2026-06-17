@@ -247,10 +247,11 @@ export default function App() {
         const next = [...prev, entry]
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next
       })
-      if (r.letter !== '?') {
-        setBuiltText(t => t + r.letter)
+      const charToAdd = r.letter !== '?' ? r.letter : r.topCandidates[0]?.letter ?? null
+      if (charToAdd !== null) {
+        setBuiltText(t => t + charToAdd)
         clearCanvas()
-        speakChar(r.letter)
+        speakChar(charToAdd)
       }
     } finally {
       setIsProcessing(false)
