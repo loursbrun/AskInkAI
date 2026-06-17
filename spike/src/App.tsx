@@ -90,6 +90,7 @@ export default function App() {
   const [pendingKey, setPendingKey] = useState(0)
   const historySeqRef = useRef(0)
   const [builtText, setBuiltText] = useState('')
+  const [isEditingText, setIsEditingText] = useState(false)
   const [copied, setCopied] = useState(false)
 
   // ── Auth init ─────────────────────────────────────────────────────────────
@@ -418,22 +419,45 @@ export default function App() {
         className="flex-none flex items-center gap-2 px-4 py-2"
         style={{ borderBottom: '1px solid #1a1a1a', background: '#0d0d0d' }}
       >
-        {/* Text display */}
-        <div
-          className="flex-1 min-w-0 px-3 py-2 rounded-lg overflow-x-auto"
-          style={{ background: '#111', border: '1px solid #222', minHeight: 44, display: 'flex', alignItems: 'center' }}
-        >
-          {builtText ? (
-            <span style={{ color: '#f5f5f5', fontFamily: 'monospace', fontSize: 20, whiteSpace: 'pre', letterSpacing: 1 }}>
-              {builtText}
-              <span className="cursor-blink" style={{ color: '#6366f1' }}>|</span>
-            </span>
-          ) : (
-            <span style={{ color: '#333', fontFamily: 'monospace', fontSize: 14 }}>
-              Dessine des lettres — elles s'accumuleront ici…
-            </span>
-          )}
-        </div>
+        {/* Text display / edit */}
+        {isEditingText ? (
+          <input
+            autoFocus
+            value={builtText}
+            onChange={e => setBuiltText(e.target.value)}
+            onBlur={() => setIsEditingText(false)}
+            onKeyDown={e => { if (e.key === 'Enter') setIsEditingText(false) }}
+            className="flex-1 min-w-0 px-3 py-2 rounded-lg"
+            style={{
+              background: '#111',
+              border: '1px solid #6366f1',
+              minHeight: 44,
+              color: '#f5f5f5',
+              fontFamily: 'monospace',
+              fontSize: 20,
+              letterSpacing: 1,
+              outline: 'none',
+            }}
+          />
+        ) : (
+          <div
+            className="flex-1 min-w-0 px-3 py-2 rounded-lg overflow-x-auto"
+            onClick={() => setIsEditingText(true)}
+            title="Cliquer pour éditer"
+            style={{ background: '#111', border: '1px solid #222', minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'text' }}
+          >
+            {builtText ? (
+              <span style={{ color: '#f5f5f5', fontFamily: 'monospace', fontSize: 20, whiteSpace: 'pre', letterSpacing: 1 }}>
+                {builtText}
+                <span className="cursor-blink" style={{ color: '#6366f1' }}>|</span>
+              </span>
+            ) : (
+              <span style={{ color: '#333', fontFamily: 'monospace', fontSize: 14 }}>
+                Dessine des lettres — elles s'accumuleront ici…
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Envoyer à Claude */}
         <button
